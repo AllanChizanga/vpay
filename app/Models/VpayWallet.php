@@ -34,5 +34,21 @@ class VpayWallet extends BaseModel
         return $this->hasMany(VpayTransaction::class, 'wallet_id');
     }
 
-    
+    public function setCurrencyAttribute($value)
+{
+    // Load allowed currencies from config
+    $allowed = config('currency.allowed');
+
+    if (!in_array($value, $allowed, true)) {
+        throw new Exception("Unsupported currency: ".$value);
+    }
+
+    // If wallet already exists in DB, block currency changes
+    if ($this->exists && $this->currency !== $value) {
+        throw new Exception("Wallet currency cannot be changed once created.");
+    }
+
+    $this->attributes['currency'] = $value;
+}
+
 }

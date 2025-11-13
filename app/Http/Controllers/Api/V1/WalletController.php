@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\WalletTransactionRequest;
 use App\Services\WalletService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Exception;
 
 class WalletController extends Controller
 {
@@ -17,58 +19,100 @@ class WalletController extends Controller
     }
 
     /**
-     * Show a user's wallet
+     * Show the authenticated user's wallet
      */
-    public function show(string $userId): JsonResponse
+    public function show(Request $request, string $userId): JsonResponse
     {
-        $wallet = $this->walletService->getUserWallet($userId);
+        try {
+            $authUser = $request->get('user'); // Authenticated user from middleware
 
-        return response()->json([
-            'wallet' => $wallet,
-        ]);
+            // Ensure user can only access their own wallet
+            if ($authUser['id'] != $userId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Forbidden: cannot access this wallet',
+                ], 403);
+            }
+
+            $wallet = $this->walletService->getUserWallet($userId);
+
+            return response()->json([
+                'success' => true,
+                'wallet' => $wallet,
+            ]);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 400);
+        }
     }
 
     /**
-     * Credit a user's wallet
+     * Credit the authenticated user's wallet
      */
     public function credit(WalletTransactionRequest $request): JsonResponse
     {
         $data = $request->validated();
+        $authUser = $request->get('user'); // Authenticated user
 
-        $wallet = $this->walletService->getUserWallet($data['user_id']);
+        try {
+            $wallet = $this->walletService->getUserWallet(
+                $authUser['id'], // Always use authenticated user's ID
+                $data['currency'] ?? null
+            );
 
-        // Deposit returns a VpayTransaction
-        $transaction = $this->walletService->deposit(
-            $wallet,
-            $data['amount'],
-            $data['reference'] ?? null
-        );
+            $transaction = $this->walletService->deposit(
+                $wallet,
+                $data['amount'],
+                $data['reference'] ?? null,
+                $data['idempotency_key'] ?? null,
+            );
 
-        return response()->json([
-            'message' => 'Wallet credited successfully',
-            'transaction' => $transaction,
-        ]);
+            return response()->json([
+                'success' => true,
+                'message' => 'Wallet credited successfully',
+                'transaction' => $transaction,
+            ]);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 400);
+        }
     }
 
     /**
-     * Debit a user's wallet
+     * Debit the authenticated user's wallet
      */
     public function debit(WalletTransactionRequest $request): JsonResponse
     {
         $data = $request->validated();
+        $authUser = $request->get('user'); // Authenticated user
 
-        $wallet = $this->walletService->getUserWallet($data['user_id']);
+        try {
+            $wallet = $this->walletService->getUserWallet(
+                $authUser['id'], // Always use authenticated user's ID
+                $data['currency'] ?? null
+            );
 
-        // Withdraw returns a VpayTransaction
-        $transaction = $this->walletService->withdraw(
-            $wallet,
-            $data['amount'],
-            $data['reference'] ?? null
-        );
+            $transaction = $this->walletService->withdraw(
+                $wallet,
+                $data['amount'],
+                $data['reference'] ?? null,
+                $data['idempotency_key'] ?? null,
+            );
 
-        return response()->json([
-            'message' => 'Wallet debited successfully',
-            'transaction' => $transaction,
-        ]);
+            return response()->json([
+                'success' => true,
+                'message' => 'Wallet debited successfully',
+                'transaction' => $transaction,
+            ]);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 400);
+        }
     }
 }

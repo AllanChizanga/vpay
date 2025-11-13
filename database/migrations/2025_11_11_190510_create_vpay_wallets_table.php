@@ -15,7 +15,7 @@ return new class extends Migration
            $table->uuid('id')->primary();
 
             // Wallet owner
-            $table->foreignUuid('user_id')->constrained('users')->cascadeOnDelete();
+            $table->foreignUuid('user_id');
 
             // Currency and balance
             $table->string('currency', 3)->default('USD');

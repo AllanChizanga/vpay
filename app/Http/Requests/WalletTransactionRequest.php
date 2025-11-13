@@ -17,8 +17,18 @@ class WalletTransactionRequest extends FormRequest
             'user_id' => ['required', 'exists:users,id'],
             'amount' => ['required', 'numeric', 'min:0.01'],
             'type' => ['required', 'in:credit,debit'],
-            'reference' => ['nullable', 'string'],
+            'currency' => ['nullable', 'string', 'in:' . implode(',', config('currency.allowed'))],
+            'reference' => ['nullable', 'string', 'max:255'],
             'description' => ['nullable', 'string', 'max:255'],
+            'idempotency_key' => ['nullable', 'string', 'max:255'],
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'currency.in' => 'The selected currency is invalid.',
+            'amount.min' => 'Transaction amount must be greater than zero.',
         ];
     }
 }
