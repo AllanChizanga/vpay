@@ -27,8 +27,8 @@ return new class extends Migration
             $table->decimal('balance_after', 24, 8);
 
             // Optional sender/receiver (for transfers)
-            $table->foreignUuid('sender_id')->nullable()->constrained('users')->nullOnDelete();
-            $table->foreignUuid('receiver_id')->nullable()->constrained('users')->nullOnDelete();
+            $table->foreignUuid('sender_id')->nullable();
+            $table->foreignUuid('receiver_id')->nullable();
 
             // Optional idempotency key to prevent duplicate transactions
             $table->string('idempotency_key')->nullable()->index();
