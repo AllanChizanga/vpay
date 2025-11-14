@@ -24,8 +24,8 @@ class WalletController extends Controller
     public function show(Request $request, string $userId): JsonResponse
     {
         try {
-            $authUser = $request->user(); // use Request::user() set by middleware / actingAs
-
+            // Retrieve user injected by VerifyAuthToken middleware
+            $authUser = $request->get('auth_user');
             $authUserId = (string) data_get($authUser, 'id');
 
             // Ensure user can only access their own wallet
@@ -55,13 +55,15 @@ class WalletController extends Controller
      */
     public function credit(WalletTransactionRequest $request): JsonResponse
     {
-        $data = $request->validated();
-        $authUser = $request->user();
-        $authUserId = (string) data_get($authUser, 'id');
-
         try {
+            $data = $request->validated();
+
+            // Retrieve user injected by middleware
+            $authUser = $request->get('auth_user');
+            $authUserId = (string) data_get($authUser, 'id');
+
             $wallet = $this->walletService->getUserWallet(
-                $authUserId, // Always use authenticated user's ID
+                $authUserId,
                 $data['currency'] ?? null
             );
 
@@ -91,13 +93,15 @@ class WalletController extends Controller
      */
     public function debit(WalletTransactionRequest $request): JsonResponse
     {
-        $data = $request->validated();
-        $authUser = $request->user();
-        $authUserId = (string) data_get($authUser, 'id');
-
         try {
+            $data = $request->validated();
+
+            // Retrieve authenticated user
+            $authUser = $request->get('auth_user');
+            $authUserId = (string) data_get($authUser, 'id');
+
             $wallet = $this->walletService->getUserWallet(
-                $authUserId, // Always use authenticated user's ID
+                $authUserId,
                 $data['currency'] ?? null
             );
 
