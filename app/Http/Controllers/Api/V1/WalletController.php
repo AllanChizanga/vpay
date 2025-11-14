@@ -24,17 +24,19 @@ class WalletController extends Controller
     public function show(Request $request, string $userId): JsonResponse
     {
         try {
-            $authUser = $request->get('user'); // Authenticated user from middleware
+            $authUser = $request->user(); // use Request::user() set by middleware / actingAs
+
+            $authUserId = (string) data_get($authUser, 'id');
 
             // Ensure user can only access their own wallet
-            if ($authUser['id'] != $userId) {
+            if ($authUserId !== (string) $userId) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Forbidden: cannot access this wallet',
                 ], 403);
             }
 
-            $wallet = $this->walletService->getUserWallet($userId);
+            $wallet = $this->walletService->getUserWallet($authUserId);
 
             return response()->json([
                 'success' => true,
@@ -54,11 +56,12 @@ class WalletController extends Controller
     public function credit(WalletTransactionRequest $request): JsonResponse
     {
         $data = $request->validated();
-        $authUser = $request->get('user'); // Authenticated user
+        $authUser = $request->user();
+        $authUserId = (string) data_get($authUser, 'id');
 
         try {
             $wallet = $this->walletService->getUserWallet(
-                $authUser['id'], // Always use authenticated user's ID
+                $authUserId, // Always use authenticated user's ID
                 $data['currency'] ?? null
             );
 
@@ -67,6 +70,7 @@ class WalletController extends Controller
                 $data['amount'],
                 $data['reference'] ?? null,
                 $data['idempotency_key'] ?? null,
+                $data['currency'] ?? null
             );
 
             return response()->json([
@@ -88,11 +92,12 @@ class WalletController extends Controller
     public function debit(WalletTransactionRequest $request): JsonResponse
     {
         $data = $request->validated();
-        $authUser = $request->get('user'); // Authenticated user
+        $authUser = $request->user();
+        $authUserId = (string) data_get($authUser, 'id');
 
         try {
             $wallet = $this->walletService->getUserWallet(
-                $authUser['id'], // Always use authenticated user's ID
+                $authUserId, // Always use authenticated user's ID
                 $data['currency'] ?? null
             );
 
@@ -101,6 +106,7 @@ class WalletController extends Controller
                 $data['amount'],
                 $data['reference'] ?? null,
                 $data['idempotency_key'] ?? null,
+                $data['currency'] ?? null
             );
 
             return response()->json([

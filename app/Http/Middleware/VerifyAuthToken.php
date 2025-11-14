@@ -43,7 +43,7 @@ class VerifyAuthToken
             $json = $response->json() ?: [];
 
             $authenticated = data_get($json, 'data.authenticated', false);
-
+            // dd($authenticated);
             if ($authenticated !== true) {
                 Log::info('Auth token not authenticated by auth service', [
                     'response' => $json,
