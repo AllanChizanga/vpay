@@ -3,7 +3,7 @@
 namespace App\Http\Middleware;
 
 use Closure;
-use Exception;
+use Throwable;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -27,17 +27,25 @@ class VerifyAuthToken
             ->timeout(5)
             ->post('https://authentication.zomacdigital.co.zw/api/user/verify-token');
 
-            // Convert response to array safely
-            $json = $response->json() ?? [];
+            if (! $response->ok()) {
+                Log::warning('Auth service returned non-200', [
+                    'status' => $response->status(),
+                    'body' => $response->body(),
+                ]);
 
-            // Check if the response has authenticated flag
-            $authenticated = $json['data']['authenticated'] ?? false;
+                return response()->json(['message' => 'Unauthorized: Token verification failed'], 403);
+            }
+
+            $json = $response->json() ?: [];
+
+            // Use data_get to safely retrieve nested values without notices
+            $authenticated = data_get($json, 'data.authenticated', false);
 
             if ($authenticated !== true) {
                 return response()->json(['message' => 'Unauthorized: Token invalid'], 403);
             }
 
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             Log::error('Auth verification failed', [
                 'error' => $e->getMessage(),
             ]);
