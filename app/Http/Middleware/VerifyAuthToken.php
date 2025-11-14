@@ -6,15 +6,11 @@ use Closure;
 use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
 
 class VerifyAuthToken
 {
-    /**
-     * Handle an incoming request.
-     *
-     * @param  \Closure(\Illuminate\Http\Request): (\Symfony\Component\HttpFoundation\Response)  $next
-     */
     public function handle(Request $request, Closure $next): Response
     {
         $token = $request->bearerToken();
@@ -31,17 +27,21 @@ class VerifyAuthToken
             ->timeout(5)
             ->post('https://authentication.zomacdigital.co.zw/api/user/verify-token');
 
-            $json = $response->json();
+            // Convert response to array safely
+            $json = $response->json() ?? [];
 
-            if (
-                !isset($json['data']['authenticated']) ||
-                !$json['data']['authenticated']
-            ) {
-                return response()->json(['message' => 'Unauthorized: Invalid token or authentication failed'], 403);
+            // Check if the response has authenticated flag
+            $authenticated = $json['data']['authenticated'] ?? false;
+
+            if ($authenticated !== true) {
+                return response()->json(['message' => 'Unauthorized: Token invalid'], 403);
             }
 
-            
         } catch (Exception $e) {
+            Log::error('Auth verification failed', [
+                'error' => $e->getMessage(),
+            ]);
+
             return response()->json(['message' => 'Unauthorized: Token verification failed'], 403);
         }
 
