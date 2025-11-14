@@ -19,13 +19,12 @@ class WalletService
      */
     public function getUserWallet(string $userId, ?string $currency = null): VpayWallet
     {
-        // Use default currency if null
         $currency = $currency ?: config('currency.allowed')[0];
 
         return VpayWallet::firstOrCreate(
             ['user_id' => $userId],
             [
-                'balance' => bcadd('0', '0', VpayWallet::MONEY_SCALE),
+                'balance' => '0.00',
                 'currency' => $currency,
                 'version' => 0,
             ]
@@ -37,8 +36,10 @@ class WalletService
      */
     protected function normalizeAmount($amount): string
     {
+        
         return bcadd((string)$amount, '0', VpayWallet::MONEY_SCALE);
     }
+
 
     /**
      * Deposit / Credit
@@ -50,33 +51,47 @@ class WalletService
         ?string $idempotencyKey = null,
         ?string $currency = null
     ): VpayTransaction {
-        // Ensure currency is a string
+
+        // Validate currency
         $currency = $currency ?: $wallet->currency;
         $this->validateCurrency($wallet, $currency);
 
+        // Convert to decimal string safely
         $amountStr = $this->normalizeAmount($amount);
+
         if (bccomp($amountStr, '0', VpayWallet::MONEY_SCALE) !== 1) {
             throw new Exception('Deposit amount must be positive.');
         }
 
         return DB::transaction(function () use ($wallet, $amountStr, $notes, $idempotencyKey) {
-            if ($idempotencyKey && $existing = VpayTransaction::where('idempotency_key', $idempotencyKey)->first()) {
-                return $existing;
+
+      
+            if ($idempotencyKey) {
+                $existing = VpayTransaction::where('idempotency_key', $idempotencyKey)->first();
+                if ($existing) return $existing;
             }
 
-            $before = $wallet->balance ?: bcadd('0', '0', VpayWallet::MONEY_SCALE);
-            $after = bcadd($before, $amountStr, VpayWallet::MONEY_SCALE);
+            $before = $wallet->balance ?? '0.00';
+            $after  = bcadd($before, $amountStr, VpayWallet::MONEY_SCALE);
             $currentVersion = $wallet->version ?? 0;
 
+            // Optimistic Locking
             $updated = VpayWallet::where('id', $wallet->id)
                 ->where('version', $currentVersion)
-                ->update(['balance' => $after, 'version' => $currentVersion + 1]);
+                ->update([
+                    'balance' => $after,
+                    'version' => $currentVersion + 1
+                ]);
 
-            if ($updated === 0) throw new Exception('Concurrent wallet update detected. Retry.');
+            if ($updated === 0) {
+                throw new Exception('Concurrent wallet update detected. Please retry.');
+            }
 
+            // Update in-memory model
             $wallet->balance = $after;
             $wallet->version = $currentVersion + 1;
 
+            // Create transaction
             $txn = VpayTransaction::create([
                 'wallet_id' => $wallet->id,
                 'amount' => $amountStr,
@@ -87,6 +102,7 @@ class WalletService
                 'idempotency_key' => $idempotencyKey,
             ]);
 
+            // Ledger
             VpayLedgerEntry::create([
                 'wallet_id' => $wallet->id,
                 'transaction_id' => $txn->id,
@@ -96,6 +112,7 @@ class WalletService
                 'narration' => 'Wallet deposit (credit)',
             ]);
 
+            // Dispatch event after commit
             DB::afterCommit(function () use ($wallet, $txn) {
                 Event::dispatch(new WalletCredited($wallet->id, $txn->id));
                 $wallet->forgetCache();
@@ -105,6 +122,7 @@ class WalletService
             return $txn;
         });
     }
+
 
     /**
      * Withdraw / Debit
@@ -116,20 +134,27 @@ class WalletService
         ?string $idempotencyKey = null,
         ?string $currency = null
     ): VpayTransaction {
+
+        // Validate currency
         $currency = $currency ?: $wallet->currency;
         $this->validateCurrency($wallet, $currency);
 
         $amountStr = $this->normalizeAmount($amount);
+
         if (bccomp($amountStr, '0', VpayWallet::MONEY_SCALE) !== 1) {
             throw new Exception('Withdrawal amount must be positive.');
         }
 
         return DB::transaction(function () use ($wallet, $amountStr, $notes, $idempotencyKey) {
-            if ($idempotencyKey && $existing = VpayTransaction::where('idempotency_key', $idempotencyKey)->first()) {
-                return $existing;
+
+            // Idempotency
+            if ($idempotencyKey) {
+                $existing = VpayTransaction::where('idempotency_key', $idempotencyKey)->first();
+                if ($existing) return $existing;
             }
 
-            $before = $wallet->balance ?: bcadd('0', '0', VpayWallet::MONEY_SCALE);
+            $before = $wallet->balance ?? '0.00';
+
             if (bccomp($before, $amountStr, VpayWallet::MONEY_SCALE) === -1) {
                 throw new Exception('Insufficient balance.');
             }
@@ -139,9 +164,14 @@ class WalletService
 
             $updated = VpayWallet::where('id', $wallet->id)
                 ->where('version', $currentVersion)
-                ->update(['balance' => $after, 'version' => $currentVersion + 1]);
+                ->update([
+                    'balance' => $after,
+                    'version' => $currentVersion + 1
+                ]);
 
-            if ($updated === 0) throw new Exception('Concurrent wallet update detected. Retry.');
+            if ($updated === 0) {
+                throw new Exception('Concurrent wallet update detected. Please retry.');
+            }
 
             $wallet->balance = $after;
             $wallet->version = $currentVersion + 1;
@@ -156,6 +186,7 @@ class WalletService
                 'idempotency_key' => $idempotencyKey,
             ]);
 
+            // Ledger
             VpayLedgerEntry::create([
                 'wallet_id' => $wallet->id,
                 'transaction_id' => $txn->id,
@@ -175,8 +206,9 @@ class WalletService
         });
     }
 
+
     /**
-     * Transfer between wallets
+     * Transfer
      */
     public function transfer(
         VpayWallet $sender,
@@ -185,10 +217,12 @@ class WalletService
         ?string $notes = null,
         ?string $idempotencyKey = null
     ): array {
+
         if ($sender->id === $receiver->id) {
             throw new Exception('Cannot transfer to the same wallet.');
         }
 
+        // FIXED: double-check currency on both wallets
         $this->validateCurrency($sender, $sender->currency);
         $this->validateCurrency($receiver, $receiver->currency);
 
@@ -197,40 +231,59 @@ class WalletService
         }
 
         $amountStr = $this->normalizeAmount($amount);
+
         if (bccomp($amountStr, '0', VpayWallet::MONEY_SCALE) !== 1) {
             throw new Exception('Transfer amount must be positive.');
         }
 
         return DB::transaction(function () use ($sender, $receiver, $amountStr, $notes, $idempotencyKey) {
-            $senderBefore = $sender->balance ?: bcadd('0', '0', VpayWallet::MONEY_SCALE);
+
+            $senderBefore = $sender->balance ?? '0.00';
+
             if (bccomp($senderBefore, $amountStr, VpayWallet::MONEY_SCALE) === -1) {
-                throw new Exception('Insufficient balance in sender.');
+                throw new Exception('Insufficient balance in sender wallet.');
             }
 
-            $receiverBefore = $receiver->balance ?: bcadd('0', '0', VpayWallet::MONEY_SCALE);
+            $receiverBefore = $receiver->balance ?? '0.00';
+
             $senderAfter = bcsub($senderBefore, $amountStr, VpayWallet::MONEY_SCALE);
             $receiverAfter = bcadd($receiverBefore, $amountStr, VpayWallet::MONEY_SCALE);
 
+            // Update sender first (optimistic locking)
             $u1 = VpayWallet::where('id', $sender->id)
-                ->where('version', $sender->version ?? 0)
-                ->update(['balance' => $senderAfter, 'version' => ($sender->version ?? 0) + 1]);
-            if ($u1 === 0) throw new Exception('Concurrent update on sender wallet.');
+                ->where('version', $sender->version)
+                ->update([
+                    'balance' => $senderAfter,
+                    'version' => $sender->version + 1
+                ]);
 
+            if ($u1 === 0) {
+                throw new Exception('Concurrent update on sender wallet.');
+            }
+
+            // Update receiver
             $u2 = VpayWallet::where('id', $receiver->id)
-                ->where('version', $receiver->version ?? 0)
-                ->update(['balance' => $receiverAfter, 'version' => ($receiver->version ?? 0) + 1]);
-            if ($u2 === 0) throw new Exception('Concurrent update on receiver wallet.');
+                ->where('version', $receiver->version)
+                ->update([
+                    'balance' => $receiverAfter,
+                    'version' => $receiver->version + 1
+                ]);
 
+            if ($u2 === 0) {
+                throw new Exception('Concurrent update on receiver wallet.');
+            }
+
+            // Update in-memory
             $sender->balance = $senderAfter;
-            $sender->version = ($sender->version ?? 0) + 1;
+            $sender->version++;
             $receiver->balance = $receiverAfter;
-            $receiver->version = ($receiver->version ?? 0) + 1;
+            $receiver->version++;
 
             $senderTxn = VpayTransaction::create([
                 'wallet_id' => $sender->id,
                 'amount' => $amountStr,
                 'transaction_type' => 'cashout',
-                'notes' => $notes ?? 'Transfer to wallet ' . $receiver->id,
+                'notes' => $notes ?? "Transfer to wallet {$receiver->id}",
                 'balance_before' => $senderBefore,
                 'balance_after' => $senderAfter,
                 'receiver_id' => $receiver->user_id,
@@ -241,13 +294,14 @@ class WalletService
                 'wallet_id' => $receiver->id,
                 'amount' => $amountStr,
                 'transaction_type' => 'cashin',
-                'notes' => $notes ?? 'Transfer from wallet ' . $sender->id,
+                'notes' => $notes ?? "Transfer from wallet {$sender->id}",
                 'balance_before' => $receiverBefore,
                 'balance_after' => $receiverAfter,
                 'sender_id' => $sender->user_id,
                 'idempotency_key' => $idempotencyKey,
             ]);
 
+            // Ledger entries
             VpayLedgerEntry::create([
                 'wallet_id' => $sender->id,
                 'transaction_id' => $senderTxn->id,
@@ -268,10 +322,15 @@ class WalletService
 
             DB::afterCommit(function () use ($sender, $receiver, $senderTxn, $receiverTxn) {
                 Event::dispatch(new TransferSucceeded(
-                    $sender->id, $receiver->id, $senderTxn->id, $receiverTxn->id
+                    $sender->id,
+                    $receiver->id,
+                    $senderTxn->id,
+                    $receiverTxn->id
                 ));
+
                 $sender->forgetCache();
                 $sender->refreshCache();
+
                 $receiver->forgetCache();
                 $receiver->refreshCache();
             });
@@ -279,6 +338,7 @@ class WalletService
             return [$senderTxn, $receiverTxn];
         });
     }
+
 
     /**
      * Validate wallet currency
@@ -293,7 +353,7 @@ class WalletService
 
         if ($wallet->currency !== $currency) {
             throw new Exception(
-                "Currency mismatch: wallet is {$wallet->currency}, transaction attempted in {$currency}"
+                "Currency mismatch: wallet is {$wallet->currency}, attempted {$currency}"
             );
         }
     }

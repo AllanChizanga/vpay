@@ -14,7 +14,7 @@ class WalletTransactionRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'user_id' => ['required', 'exists:users,id'],
+            'user_id' => ['required', 'string'],
             'amount' => ['required', 'numeric', 'min:0.01'],
             'type' => ['required', 'in:credit,debit'],
             'currency' => ['nullable', 'string', 'in:' . implode(',', config('currency.allowed'))],
