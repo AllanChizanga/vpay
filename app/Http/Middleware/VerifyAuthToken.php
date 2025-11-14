@@ -7,7 +7,11 @@ use Throwable;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Auth\GenericUser;
 use Symfony\Component\HttpFoundation\Response;
+
+
 
 class VerifyAuthToken
 {
@@ -24,8 +28,8 @@ class VerifyAuthToken
                 'Authorization' => 'Bearer ' . $token,
                 'Accept' => 'application/json',
             ])
-            ->timeout(5)
-            ->post('https://authentication.zomacdigital.co.zw/api/user/verify-token');
+            ->timeout((int) config('services.auth.timeout', 5))
+            ->post(config('services.auth.verify_url', 'https://authentication.zomacdigital.co.zw/api/user/verify-token'));
 
             if (! $response->ok()) {
                 Log::warning('Auth service returned non-200', [
@@ -38,11 +42,27 @@ class VerifyAuthToken
 
             $json = $response->json() ?: [];
 
-            // Use data_get to safely retrieve nested values without notices
             $authenticated = data_get($json, 'data.authenticated', false);
 
             if ($authenticated !== true) {
+                Log::info('Auth token not authenticated by auth service', [
+                    'response' => $json,
+                ]);
+
                 return response()->json(['message' => 'Unauthorized: Token invalid'], 403);
+            }
+
+            // If auth service returned user payload, set non-persistent GenericUser
+            $userPayload = data_get($json, 'data.user');
+            if (is_array($userPayload) && ! empty($userPayload)) {
+                $generic = new GenericUser($userPayload);
+                Auth::setUser($generic);
+                $request->setUserResolver(fn () => Auth::user());
+
+                Log::info('Auth user set from auth service', [
+                    'user_id' => data_get($userPayload, 'id'),
+                    'email' => data_get($userPayload, 'email'),
+                ]);
             }
 
         } catch (Throwable $e) {
@@ -56,3 +76,4 @@ class VerifyAuthToken
         return $next($request);
     }
 }
+

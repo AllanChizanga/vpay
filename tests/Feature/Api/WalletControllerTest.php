@@ -3,7 +3,7 @@
 namespace Tests\Feature\Api;
 
 use Tests\TestCase;
-use App\Models\User;
+use Illuminate\Auth\GenericUser;
 use App\Models\VpayWallet;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Event;
@@ -14,24 +14,30 @@ class WalletControllerTest extends TestCase
 {
     use RefreshDatabase;
 
-    protected User $user;
+    protected GenericUser $user;
     protected VpayWallet $wallet;
 
     protected function setUp(): void
     {
         parent::setUp();
 
-        // Create a user and wallet
-        $this->user = User::factory()->create();
+        // Create a non-persistent user (no users table required)
+        $this->user = new GenericUser([
+            'id' => 9999,
+            'name' => 'Test User',
+            'email' => 'test@example.test',
+        ]);
+
+        // Create a wallet for that user id
         $this->wallet = VpayWallet::factory()->create([
-            'user_id' => $this->user->id,
-            'balance' => '100.00', 
+            'user_id' => (string) $this->user->id,
+            'balance' => '100.00',
         ]);
     }
 
     public function test_it_can_show_a_user_wallet(): void
     {
-        // Authenticate user
+        // Authenticate user (GenericUser works with actingAs)
         $this->actingAs($this->user, 'sanctum');
 
         $response = $this->getJson("/api/wallet/{$this->user->id}");
@@ -45,44 +51,6 @@ class WalletControllerTest extends TestCase
                      ],
                  ]);
     }
-
-    // public function test_it_can_credit_a_wallet_and_fire_event(): void
-    // {
-    //     Event::fake();
-    //     $this->actingAs($this->user, 'sanctum');
-
-    //     $response = $this->postJson("/api/wallet/deposit", [
-    //         'user_id' => $this->user->id,
-    //         'amount' => '50.00',
-    //         'reference' => 'Test credit',
-    //         'type' => 'credit',
-    //     ]);
-
-    //     $response->assertStatus(200)
-    //              ->assertJsonFragment(['message' => 'Wallet credited successfully'])
-    //              ->assertJsonStructure(['wallet' => ['id', 'user_id', 'balance', 'version']]);
-
-    //     Event::assertDispatched(WalletCredited::class);
-    // }
-
-    // public function test_it_can_debit_a_wallet_and_fire_event(): void
-    // {
-    //     Event::fake();
-    //     $this->actingAs($this->user, 'sanctum');
-
-    //     $response = $this->postJson("/api/wallet/withdraw", [
-    //         'user_id' => $this->user->id,
-    //         'amount' => '30.00',
-    //         'reference' => 'Test debit',
-    //         'type' => 'debit',
-    //     ]);
-
-    //     $response->assertStatus(200)
-    //              ->assertJsonFragment(['message' => 'Wallet debited successfully'])
-    //              ->assertJsonStructure(['wallet' => ['id', 'user_id', 'balance', 'version']]);
-
-    //     Event::assertDispatched(WalletDebited::class);
-    // }
 
     public function test_it_validates_required_fields_on_credit_and_debit(): void
     {
